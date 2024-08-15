@@ -1,11 +1,19 @@
 import ttkbootstrap as ttk
+import pymongo
 from ttkbootstrap.scrolled import ScrolledFrame
 from typing import List
 from PIL import Image, ImageTk
 from tkinter import filedialog
 from settings import *
 
-# Contains ttk.Style() options to adjust, as well as placing the Main and Bottom frame widgets.
+#TODO Adjust Sort Button to be disabled when no mongodb data and in entry frame, etc. 
+
+# Establish connection to local MongoDB
+my_client = pymongo.MongoClient("mongodb://localhost:27017/")
+my_db = my_client['Bought']
+my_collection = my_db['Purchases']
+
+# Contains ttk.Style() stylings, as well as placing the Main and Bottom frame widgets.
 class Bought(ttk.Window):
     def __init__(self):
         # Setup
@@ -26,6 +34,7 @@ class Bought(ttk.Window):
         # Create Widgets 
         self.main_frame = MainFrame(self)
         BottomFrame(self, self.main_frame)
+        self.validate_mongodb() # If data exists in local MongoDB, create the approriate widgets.
 
         # Run the App
         self.mainloop()
@@ -40,8 +49,21 @@ class Bought(ttk.Window):
 
         self.geometry(f'{window_width}x{window_height}+{left_position}+{top_position}')
 
+    def validate_mongodb(self):
+        # Check if the collection actually exists
+        if (my_db.list_collection_names()):
+            # iterate through each document 
+            print("MongoDB data found! Creating ExpenseCards and placing them in MainFrame....")
+            for document in my_collection.find({}, {"_id": 0}):
+                mongo_entries: List[str] = [] 
+                for key, item in document.items():
+                    mongo_entries.append(item)
+                ExpenseCard(self.main_frame, mongo_entries[0], str(mongo_entries[1]), mongo_entries[2])
+        else:
+            print("No MongoDB data found. Starting application with no ExpenseCards....")
 
-# Main Frame takes up 90% of the window screen. Uses that space to display ExpenseCards.
+
+# Main Frame takes up 90% of the window screen. Uses that space to display ExpenseCards. Allows Scrolling.
 class MainFrame(ScrolledFrame):
     def __init__(self, master):
         super().__init__(master, autohide=True)
@@ -49,10 +71,11 @@ class MainFrame(ScrolledFrame):
 
 
 # Bottom Frame takes up 10% of the window screen. Is given access to MainFrame in order to display EntryFrame and create ExpenseCards.
+# Uploads data to MongoDB and also sorts ExpenseCards by Price.
 class BottomFrame(ttk.Frame):
     def __init__(self, master, main_frame):
         self.master = master
-        self.main_frame = main_frame
+        self.main_frame = main_frame # Access to Main Frame!
         super().__init__(master)
         self.place(relx=0, rely=1, relwidth=1, relheight=0.10, anchor='sw')
         self.create_widget()
@@ -61,6 +84,9 @@ class BottomFrame(ttk.Frame):
     def create_widget(self):
         self.add_expense_button = ttk.Button(master=self, text='Add Expense', takefocus=False, command=self.display_entry_frame)
         self.add_expense_button.place(relx=0.5, rely=1, relheight=0.8, relwidth=0.2, anchor='s')
+
+        self.sort_expenses_button = ttk.Button(master=self, text='Sort', takefocus=False, command=self.sort_expense_cards)
+        self.sort_expenses_button.place(relx=0, rely=0.2, relheight=0.8, relwidth=0.2)
 
     # Display an EntryFrame, and configure the button to have a new command for confirming entries.
     def display_entry_frame(self):
@@ -76,17 +102,39 @@ class BottomFrame(ttk.Frame):
         if entries_list[0] == '' or not entries_list[1] or not entries_list[2]:
             print("ERROR! One or more entries were not entered. Returning to Main Frame...")
             self.configure_button('add')
-        else: 
+
+        else: # Upload entry data to MongoDB and then create ExpenseCard.
             print("Success! Creating an ExpenseCard and packing it within Main Frame...")
+            self.upload_to_mongodb(entries_list[0], entries_list[1], entries_list[2])
             ExpenseCard(self.main_frame, entries_list[0], entries_list[1], entries_list[2])
             self.configure_button('add')
 
-    # Change the text of the button and it's command
+    # Change the text of the button and it's command.
     def configure_button(self, state):
         if state == 'add':
             self.add_expense_button.configure(text='Add Expense', command=self.display_entry_frame)
         elif state == 'confirm':
             self.add_expense_button.configure(text='Confirm Expense', command=self.create_expense_card)
+
+    # Upload data to local mongoDB!
+    def upload_to_mongodb(self, image_path, amount, date):
+        my_collection.insert_one({"image_path": image_path, "amount": float(amount), "date": date})
+
+    def sort_expense_cards(self):
+        # Clear Main Frame since mongoDB data exists!
+        print("Sorting Expense Cards by Price. Clearing Main Frame...")
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+
+        # Sort using pymongo sorting and populate MainFrame with ExpenseCards.
+        sorted_docs = my_collection.find({}, {"_id": 0}).sort('amount', pymongo.ASCENDING)
+        for document in sorted_docs:
+            mongo_sorted_entries: List[str] = []
+            for key, item in document.items():
+                mongo_sorted_entries.append(item)
+            ExpenseCard(self.main_frame, str(mongo_sorted_entries[0]), str(mongo_sorted_entries[1]), str(mongo_sorted_entries[2]))
+        
+        print("Finished Sorting! Displaying ExpenseCards...")
 
 
 # Entry Frame contains an upload and two entry widgets. That data will be placed on a list. 
@@ -225,8 +273,8 @@ class ReceiptWindow(ttk.Toplevel):
         self.bind('<Escape>', lambda event: self.destroy())
 
         # Display only an Image in a 1x1 grid.
-        self.rowconfigure(0, weight=1)
-        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1, uniform='a')
+        self.columnconfigure(0, weight=1, uniform='a')
         ImageContainer(self, image_path, zoom_option=no_zoom)
 
 
