@@ -1,12 +1,13 @@
 import ttkbootstrap as ttk
 import pymongo
 from ttkbootstrap.scrolled import ScrolledFrame
+from ttkbootstrap.dialogs import Messagebox
 from typing import List
 from PIL import Image, ImageTk
 from tkinter import filedialog
 from settings import *
 
-#TODO Adjust Sort Button to be disabled when no mongodb data and in entry frame, etc. 
+#TODO Change Sum display? UI touches? Display two decimal places for purchase? Change colors?
 
 # Establish connection to local MongoDB
 my_client = pymongo.MongoClient("mongodb://localhost:27017/")
@@ -16,9 +17,11 @@ my_collection = my_db['Purchases']
 # Contains ttk.Style() stylings, as well as placing the Main and Bottom frame widgets.
 class Bought(ttk.Window):
     def __init__(self):
-        # Setup
         super().__init__()
         self.title('Bought')
+        icon = Image.open('dollar.png')
+        iconPhoto = ImageTk.PhotoImage(icon)
+        self.wm_iconphoto(False, iconPhoto)
         
         self.minsize(int(WINDOW_SIZE.split('x')[0]), int(WINDOW_SIZE.split('x')[1]))
         self.center_screen_launch(int(WINDOW_SIZE.split('x')[0]), int(WINDOW_SIZE.split('x')[1]))
@@ -29,7 +32,8 @@ class Bought(ttk.Window):
         ttk.Style().configure(style='custom.TButton', background=EXPENSE_CARD_BUTTON_COLOR, foreground='white', font=('Lexend', 10))
         ttk.Style().configure(style='upload.TButton', background=EXPENSE_CARD_BUTTON_COLOR, foreground='white', font=('Verdana', 13))
 
-        self.bind('<Escape>', lambda event: self.quit())
+        self.bind('<Escape>', self.esc_exit)
+        self.protocol("WM_DELETE_WINDOW", self.click_exit)
 
         # Create Widgets 
         self.main_frame = MainFrame(self)
@@ -61,6 +65,16 @@ class Bought(ttk.Window):
                 ExpenseCard(self.main_frame, mongo_entries[0], str(mongo_entries[1]), mongo_entries[2])
         else:
             print("No MongoDB data found. Starting application with no ExpenseCards....")
+    
+    def click_exit(self):
+        print("Disconnecting from MongoDB and closing app....")
+        my_client.close()
+        self.destroy()
+    
+    def esc_exit(self, event):
+        print("Disconnecting from MongoDB and closing app....")
+        my_client.close()
+        self.destroy()
 
 
 # Main Frame takes up 90% of the window screen. Uses that space to display ExpenseCards. Allows Scrolling.
@@ -80,7 +94,7 @@ class BottomFrame(ttk.Frame):
         self.place(relx=0, rely=1, relwidth=1, relheight=0.10, anchor='sw')
         self.create_widget()
 
-    # This button switches Main Frame with Entry Frame.
+    # Create Add Expense and Sort buttons. 
     def create_widget(self):
         self.add_expense_button = ttk.Button(master=self, text='Add Expense', takefocus=False, command=self.display_entry_frame)
         self.add_expense_button.place(relx=0.5, rely=1, relheight=0.8, relwidth=0.2, anchor='s')
@@ -88,12 +102,15 @@ class BottomFrame(ttk.Frame):
         self.sort_expenses_button = ttk.Button(master=self, text='Sort', takefocus=False, command=self.sort_expense_cards)
         self.sort_expenses_button.place(relx=0, rely=0.2, relheight=0.8, relwidth=0.2)
 
-    # Display an EntryFrame, and configure the button to have a new command for confirming entries.
+        self.sum_button = ttk.Button(master=self, text='Sum All Expenses', takefocus=False, command=self.sum_expenses)
+        self.sum_button.place(relx=0.8, rely=0.2, relheight=0.8, relwidth=0.2)
+
+    # Display an EntryFrame and switch 'Add Expense' button state to have 'confirm' command.
     def display_entry_frame(self):
         self.entry_frame = EntryFrame(self.master)
-        self.configure_button('confirm')
+        self.configure_bottom_buttons('confirm')
 
-    # Create an Expense Card, and configure the button to have the original command.
+    # Create an Expense Card and switch 'Add Expense' button state to have 'add' command.
     def create_expense_card(self):
         self.entry_frame.place_forget() 
         entries_list = self.entry_frame.return_entries()
@@ -101,20 +118,23 @@ class BottomFrame(ttk.Frame):
         # Error check. Only create ExpenseCard if ALL entries filled.
         if entries_list[0] == '' or not entries_list[1] or not entries_list[2]:
             print("ERROR! One or more entries were not entered. Returning to Main Frame...")
-            self.configure_button('add')
+            self.configure_bottom_buttons('add')
 
         else: # Upload entry data to MongoDB and then create ExpenseCard.
             print("Success! Creating an ExpenseCard and packing it within Main Frame...")
             self.upload_to_mongodb(entries_list[0], entries_list[1], entries_list[2])
             ExpenseCard(self.main_frame, entries_list[0], entries_list[1], entries_list[2])
-            self.configure_button('add')
+            self.configure_bottom_buttons('add')
 
-    # Change the text of the button and it's command.
-    def configure_button(self, state):
+    # Configure 'Add Expense' command states, as well as enable/disable sorting button. 
+    def configure_bottom_buttons(self, state):
         if state == 'add':
             self.add_expense_button.configure(text='Add Expense', command=self.display_entry_frame)
-        elif state == 'confirm':
+            self.sort_expenses_button.state(["!disabled"])
+
+        elif state == 'confirm': 
             self.add_expense_button.configure(text='Confirm Expense', command=self.create_expense_card)
+            self.sort_expenses_button.state(["disabled"])
 
     # Upload data to local mongoDB!
     def upload_to_mongodb(self, image_path, amount, date):
@@ -135,6 +155,20 @@ class BottomFrame(ttk.Frame):
             ExpenseCard(self.main_frame, str(mongo_sorted_entries[0]), str(mongo_sorted_entries[1]), str(mongo_sorted_entries[2]))
         
         print("Finished Sorting! Displaying ExpenseCards...")
+
+    def sum_expenses(self):
+        # Create a pipeline that finds the sum of 'amount' for ALL documents in collection!
+        result = my_collection.aggregate([ 
+                                            {'$group': 
+                                                    {"_id": None, 
+                                                     "total": {"$sum": '$amount'}
+                                                    }
+                                                }
+                                            ])
+        for document in result:
+            for key, item in document.items():
+                if key == 'total':
+                    Messagebox.show_info(message="Total Sum Of Expenses: $" + str(round(item,2)), title="Sum")
 
 
 # Entry Frame contains an upload and two entry widgets. That data will be placed on a list. 
@@ -195,6 +229,11 @@ class ExpenseCard(ttk.Frame):
         super().__init__(master)
         self.pack(side='top', expand=True, fill='both', pady=10)
 
+        # Variables for mongodb deletion
+        self.this_image_path = image_path
+        self.this_amount = amount
+        self.this_date = date
+
         # Row/Column Config
         self.columnconfigure(0, weight=5, uniform='a')
         self.columnconfigure(1, weight=3, uniform='greg') # arbitrary name used to group 
@@ -216,20 +255,23 @@ class ExpenseCard(ttk.Frame):
         self.delete_button = ttk.Button(master=self, text='Delete', style='custom.TButton', command=self.delete_card)
         self.delete_button.grid(column=2, row=0, sticky='nw')
 
-    # Allow this instance of ExpenseCard to be removed from the widget stack.
+    # Allow this instance of ExpenseCard to be removed from the widget stack. Remove from mongoDB. 
     def delete_card(self):
+        print("Removing ExpenseCard data from MongoDb....")
+        my_collection.delete_one({"image_path": self.this_image_path, "amount": float(self.this_amount), "date": self.this_date})
+
+        print("Removing ExpenseCard from screen....")
         self.pack_forget()
 
 
 # ImageContainer is a Canvas that holds an ImageTk. Clicking on the Canvas will bring up a top level window for a closer view of the image. 
 class ImageContainer(ttk.Canvas):
     def __init__(self, master, image_path, zoom_option):
-        # Set Up
         super().__init__(master, borderwidth=5, relief='ridge')
         self.grid(row=0, column=0, rowspan=2, sticky='nsew')
 
         if zoom_option == 'allow_zoom':
-            self.bind('<Button-1>', self.create_receipt_window) # Bind Mouse1 Click to get the full image
+            self.bind('<Button-1>', self.create_receipt_window) # Bind Mouse1 Click to get the full image.
         self.bind('<Configure>', self.resize_image) # Bind window adjustments to resizing the window.
 
         # image_path was passed from EntryFrame. Use that path to create an Image. 
@@ -266,10 +308,13 @@ class ImageContainer(ttk.Canvas):
 # ReceiptWindow will contain only an ImageContainer.
 class ReceiptWindow(ttk.Toplevel):
     def __init__(self, image_path, no_zoom):
-        # Set Up
         super().__init__(topmost=True)
         self.geometry('1200x700')
         self.title('Receipt Viewer')
+        icon = Image.open('zoom.png')
+        iconPhoto = ImageTk.PhotoImage(icon)
+        self.wm_iconphoto(False, iconPhoto)
+
         self.bind('<Escape>', lambda event: self.destroy())
 
         # Display only an Image in a 1x1 grid.
