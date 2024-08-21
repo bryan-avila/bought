@@ -1,5 +1,6 @@
 import ttkbootstrap as ttk
 import pymongo
+import os
 from ttkbootstrap.scrolled import ScrolledFrame
 from typing import List
 from PIL import Image, ImageTk
@@ -59,10 +60,10 @@ class Bought(ttk.Window):
 
     def validate_mongodb(self):
         # Check if the collection actually exists!
-        if (my_db.list_collection_names()):
-            # Iterate through each document.
+        if (my_collection.count_documents({}) > 0):
             print("MongoDB data found! Creating ExpenseCards and placing them in MainFrame....")
 
+            # Iterate through each document.
             for document in my_collection.find({}, {"_id": 0}):
                 mongo_entries: List[str] = [] 
                 for key, item in document.items():
@@ -345,11 +346,15 @@ class ImageContainer(ttk.Canvas):
             self.bind('<Button-1>', self.create_receipt_window) # Bind Mouse1 Click to get the full image.
         self.bind('<Configure>', self.resize_image) # Bind window adjustments to resizing the window.
 
-        # image_path was passed from EntryFrame. Use that path to create an Image. 
+        # image_path was passed from EntryFrame. Use that path to create an Image, as long as path exists!
         self.image_path = image_path
-        self.image = Image.open(self.image_path)
-        self.image_ratio = self.image.size[0] / self.image.size[1]
-        self.image_tk = ImageTk.PhotoImage(self.image)
+        if os.path.exists(self.image_path):    
+            print(f"{self.image_path} OS path exists! Placing on Canvas....")
+            self.image = Image.open(self.image_path)
+            self.image_ratio = self.image.size[0] / self.image.size[1]
+            self.image_tk = ImageTk.PhotoImage(self.image)
+        else:
+            raise Exception(f" Error! The path {self.image_path} no longer exists! Please either restore that path or delete it from MongoDB!")
 
     def resize_image(self, event):
 
@@ -366,7 +371,7 @@ class ImageContainer(ttk.Canvas):
             self.image_width = int(event.width)
             self.image_height = int(self.image_width / self.image_ratio)
 
-        self.delete('all')
+        self.delete('all') # Clear this Canvas of previous images.
         self.adjusted_image = self.image.resize((self.image_width, self.image_height))
         self.image_tk = ImageTk.PhotoImage(self.adjusted_image)
         self.create_image(event.width / 2 , event.height / 2, image=self.image_tk)
@@ -382,10 +387,13 @@ class ReceiptWindow(ttk.Toplevel):
         super().__init__(topmost=True)
         self.geometry('1200x700')
         self.title('Receipt Viewer')
+
+        # Icon 
         icon = Image.open('zoom.png')
         iconPhoto = ImageTk.PhotoImage(icon)
         self.wm_iconphoto(False, iconPhoto)
 
+        # Binding
         self.bind('<Escape>', lambda event: self.destroy())
 
         # Display only an Image in a 1x1 grid.
